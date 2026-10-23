@@ -1,2 +1,0 @@
-using System;using NetMQ;using NetMQ.Sockets;
-class Subscriber{static void Main(){using(var s=new SubscriberSocket()){s.Connect("tcp://127.0.0.1:5557");s.Subscribe("kinect.");Console.WriteLine("Listening; Ctrl+C stops");while(true){var m=s.ReceiveMultipartMessage();Console.WriteLine(m[0].ConvertToString()+" "+m[1].ConvertToString()+" payload="+m[2].MessageSize);}}}}

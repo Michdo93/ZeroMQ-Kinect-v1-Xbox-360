@@ -1,2 +1,0 @@
-using System;using NetMQ.Sockets;
-class SetBrightness{static void Main(string[] a){double v=a.Length>0?double.Parse(a[0],System.Globalization.CultureInfo.InvariantCulture):0.35;if(v<0||v>1)throw new ArgumentOutOfRangeException();using(var s=new PushSocket()){s.Connect("tcp://127.0.0.1:5558");s.SendFrame("{\"command\":\"brightness\",\"value\":"+v.ToString(System.Globalization.CultureInfo.InvariantCulture)+"}");Console.WriteLine("Requested brightness "+v);}}}

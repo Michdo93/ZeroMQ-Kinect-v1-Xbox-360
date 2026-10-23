@@ -1,38 +1,72 @@
-# ZeroMQ Kinect v1 (Xbox 360)
+# ZeroMQ Kinect v1 for Ubuntu (Python)
 
-A Windows example capturing Kinect v1 color, depth, skeleton/joints and microphone audio to ZeroMQ PUB/SUB, plus a brightness control endpoint. This is Kinect v1, not Kinect v2.
+Ubuntu/Python bridge for Xbox 360 Kinect v1. It streams color and depth through OpenKinect libfreenect, captures the Kinect microphone as a Linux ALSA input with sounddevice, and sends each stream over ZeroMQ. It offers a software brightness adjustment for RGB and libfreenect motor tilt/LED controls. This is Kinect v1, not Kinect v2.
 
-## Prerequisites and install
+## Install sensor support
 
-You need the original Kinect sensor with external power, USB 2.0, Windows, Kinect for Windows SDK/runtime 1.8, and .NET Framework 4.8 build tools. Microsoft SDK 1.8 documents Windows 7/8/8.1 support; later versions may run legacy drivers but are outside that support matrix. Download SDK separately from https://www.microsoft.com/en-us/download/details.aspx?id=40278 . Disconnect sensor during SDK setup; connect external power and USB after installation. The proprietary SDK/driver is not included in this repo.
+Connect the Kinect's external power supply and USB 2.0. Install dependencies:
 
-Build in PowerShell at repository root:
+    sudo apt update
+    sudo apt install -y git cmake build-essential libusb-1.0-0-dev libudev-dev python3-dev python3-venv python3-numpy python3-sounddevice alsa-utils
+    git clone https://github.com/OpenKinect/libfreenect.git
+    cd libfreenect
+    mkdir build && cd build
+    cmake .. -DBUILD_PYTHON3=ON
+    make -j
+    sudo make install
+    sudo ldconfig
+    cd ../..
 
-    dotnet restore KinectZmqBridge\KinectZmqBridge.csproj
-    dotnet build KinectZmqBridge\KinectZmqBridge.csproj -c Release
+Install and test Python ZeroMQ:
 
-The project references Microsoft.Kinect.dll via KINECTSDK10_DIR. If missing, set $env:KINECTSDK10_DIR to the SDK folder, commonly C:\Program Files\Microsoft SDKs\Kinect\v1.8\ . Keep x64 consistent. NetMQ and Newtonsoft restore from NuGet.
+    python3 -m venv --system-site-packages .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
 
-## Run and test
+The system-site-packages option lets this environment use Ubuntu's freenect wrapper and sounddevice package. If your distribution packages libfreenect's wrapper separately, install its matching python3-freenect package instead. Add the project's udev rules or group access so your user can open Kinect USB devices without sudo; then log out/in. Do not use sudo pip.
 
-    dotnet run --project KinectZmqBridge\KinectZmqBridge.csproj
+## Audio device setup
 
-The bridge binds ZeroMQ PUB on tcp://*:5557 and brightness PULL control on tcp://127.0.0.1:5558. Ctrl+C stops it. Confirm the sensor is visible to the SDK before starting.
+List ALSA recording devices with arecord -l and sounddevice devices with:
 
-## Brightness adjustment
+    .venv/bin/python -m sounddevice
 
-While bridge runs, camera brightness example:
+The Kinect microphone array may appear as a USB audio capture device. Note its device index and channel support; choose a supported input. You can test recording in ALSA before running the bridge. The Linux libfreenect Python wrapper does not expose libfreenect's audio API, so this project captures audio through ALSA/sounddevice. Audio firmware and device model can affect availability.
 
-    dotnet run --project examples\SetBrightness\SetBrightness.csproj -- 0.35
+## Run / test
 
-Valid range is 0.0–1.0 (SDK default about 0.2156). It sets the color camera property; auto exposure can affect perceived brightness. The SDK also exposes contrast, exposure, gain, gamma, hue, sharpness, white balance and saturation. The command socket is unauthenticated and loopback-only.
+Terminal A:
 
-## Message contract
+    .venv/bin/python src/kinect_bridge.py
 
-Each ZeroMQ event has three frames: topic UTF-8, metadata JSON UTF-8, binary payload. Topics: kinect.color.bgra (640x480 BGRA32), kinect.depth.u16 (320x240 little endian depth/player-index samples), kinect.skeleton.json (joint coordinates in meters), kinect.audio.pcm16 (mono 16 kHz PCM16LE), kinect.status. Color is uncompressed (~36 MB/s). Use a subscriber to decode data; this starter intentionally focuses on forwarding.
+Terminal B:
 
-## Configuration, adaptation and troubleshooting
+    .venv/bin/python examples/monitor.py
 
-Set KINECT_ZMQ_PUB to change publisher bind, then update your subscriber. Change command port in bridge and command client together. Disable a modality by removing its stream Enable/event hook or audio startup. Choose another SDK stream format and update metadata/decoder. Depth is packed measurement data, not grayscale. No device: check power, USB, SDK driver and exclusivity. No audio: check audio driver/access. Build cannot find Microsoft.Kinect: install SDK and set KINECTSDK10_DIR. High throughput: filter topics or compress downstream.
+The monitor prints metadata and payload sizes for kinect.color.rgb, kinect.depth.u16 and kinect.audio.pcm. If ALSA chooses the wrong microphone or reports unsupported channels, stop and pass the device index from the device list:
 
-References: official Kinect SDK 1.8 installer https://www.microsoft.com/en-us/download/details.aspx?id=40278 ; color settings and brightness ranges https://learn.microsoft.com/en-us/previous-versions/windows/kinect-1.8/jj663774%28v%3Dieb.10%29 ; audio beam interface https://learn.microsoft.com/en-us/previous-versions/windows/kinect-1.8/hh855320%28v%3Dieb.10%29 .
+    .venv/bin/python src/kinect_bridge.py --audio-device 2
+
+The bridge binds PUB tcp://*:5557 and control PULL tcp://127.0.0.1:5558. Ctrl+C stops it. Start subscriber first.
+
+## Settings and controls
+
+RGB brightness is software adjustment after capture, integer offset -100..100; it is not the Kinect camera's hardware brightness control. For example, while bridge runs:
+
+    .venv/bin/python examples/control.py brightness 25
+
+Set it back to neutral with brightness 0. Controls also include motor tilt in degrees (-30..30) and LED mode; exact LED values depend on libfreenect enums, so use standard values 0-6. Examples:
+
+    .venv/bin/python examples/control.py tilt 10
+    .venv/bin/python examples/control.py led 3
+
+Control PUB/PULL is unauthenticated and loopback-only. Do not expose it on a public interface.
+
+## Message format and customization
+
+Every PUB message has three frames: UTF-8 topic, UTF-8 JSON metadata, then binary payload. RGB is packed RGB24; depth is little-endian uint16 depth data. Audio is int16 PCM at 16 kHz with channel count metadata. Color/depth callbacks copy data before queuing. Queue is bounded; overloaded capture drops new packets rather than blocking device callbacks. Edit image callback for brightness/gamma, choose alternative libfreenect modes there, or change bind addresses in CLI. RGB uses ~27 MB/s at 640x480x30; use topic filtering or lower resolution/fps for constrained links.
+
+## Limits and troubleshooting
+
+The Kinect v1 skeleton tracker is part of Microsoft's Windows SDK, not libfreenect; this Ubuntu project forwards RGB/depth/audio and does not claim skeleton frames. The Python libfreenect wrapper documents that audio is not implemented, hence separate ALSA capture. Brightness changes RGB pixels in software; hardware camera settings available in the Windows SDK are not exposed by this Linux backend. No device: check power, USB, udev permissions and libfreenect build. No audio: inspect arecord -l, select device, ensure audio firmware/driver works. References: https://github.com/OpenKinect/libfreenect ; Python wrapper notes: https://github.com/OpenKinect/libfreenect/blob/master/wrappers/python/freenect.pyx .
